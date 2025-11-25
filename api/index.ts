@@ -12,22 +12,10 @@ const io = new Server({
   }
 });
 
-const port = Number(process.env.PORT);
-
-io.listen(port);
-console.log(`Server is running on port ${port}`);
-
-type OnlineUser = { socketId: string; userId: string };
-type ChatMessagePayload = {
-  userId: string;
-  message: string;
-  timestamp?: string;
-};
-
-let onlineUsers: OnlineUser[] = [];
+let onlineUsers: { socketId: string; userId: string; username: string }[] = [];
 
 io.on("connection", (socket: Socket) => {
-  onlineUsers.push({ socketId: socket.id, userId: "" });
+  onlineUsers.push({ socketId: socket.id, userId: "", username: "Anonymous" });
   io.emit("usersOnline", onlineUsers);
   console.log(
     "A user connected with id: ",
@@ -37,8 +25,9 @@ io.on("connection", (socket: Socket) => {
     " online users"
   );
 
-  socket.on("newUser", (userId: string) => {
-    if (!userId) {
+  // Registro de nuevo usuario con username
+  socket.on("newUser", (data: { userId: string; username: string }) => {
+    if (!data.userId) {
       return;
     }
 
@@ -47,41 +36,60 @@ io.on("connection", (socket: Socket) => {
     );
 
     if (existingUserIndex !== -1) {
-      onlineUsers[existingUserIndex] = { socketId: socket.id, userId };
-    } else if (!onlineUsers.some(user => user.userId === userId)) {
-      onlineUsers.push({ socketId: socket.id, userId });
+      onlineUsers[existingUserIndex] = { 
+        socketId: socket.id, 
+        userId: data.userId,
+        username: data.username || "Anonymous"
+      };
+    } else if (!onlineUsers.some(user => user.userId === data.userId)) {
+      onlineUsers.push({ 
+        socketId: socket.id, 
+        userId: data.userId,
+        username: data.username || "Anonymous"
+      });
     } else {
       onlineUsers = onlineUsers.map(user =>
-        user.userId === userId ? { socketId: socket.id, userId } : user
+        user.userId === data.userId 
+          ? { socketId: socket.id, userId: data.userId, username: data.username || "Anonymous" } 
+          : user
       );
     }
 
     io.emit("usersOnline", onlineUsers);
+    console.log(`User ${data.username} (${data.userId}) registered`);
   });
 
-  socket.on("chat:message", (payload: ChatMessagePayload) => {
-    const trimmedMessage = payload?.message?.trim();
+  // Manejo de mensajes de chat
+  socket.on("chatMessage", (message: { 
+    userId: string; 
+    username: string; 
+    text: string; 
+    timestamp: number 
+  }) => {
+    console.log(`Message from ${message.username}: ${message.text}`);
+    // Broadcast del mensaje a todos los clientes
+    io.emit("chatMessage", message);
+  });
 
-    if (!trimmedMessage) {
-      return;
+  // Mensajes privados (opcional)
+  socket.on("privateMessage", (data: {
+    to: string;
+    from: string;
+    username: string;
+    text: string;
+    timestamp: number;
+  }) => {
+    const recipient = onlineUsers.find(u => u.userId === data.to);
+    if (recipient) {
+      io.to(recipient.socketId).emit("privateMessage", data);
+      // También enviar confirmación al remitente
+      socket.emit("privateMessage", data);
     }
+  });
 
-    const sender =
-      onlineUsers.find(user => user.socketId === socket.id) ?? null;
-
-    const outgoingMessage = {
-      userId: payload.userId || sender?.userId || socket.id,
-      message: trimmedMessage,
-      timestamp: payload.timestamp ?? new Date().toISOString()
-    };
-
-    io.emit("chat:message", outgoingMessage);
-    console.log(
-      "Relayed chat message from: ",
-      outgoingMessage.userId,
-      " message: ",
-      outgoingMessage.message
-    );
+  // Usuario está escribiendo
+  socket.on("typing", (data: { userId: string; username: string; isTyping: boolean }) => {
+    socket.broadcast.emit("userTyping", data);
   });
 
   socket.on("disconnect", () => {
@@ -96,3 +104,8 @@ io.on("connection", (socket: Socket) => {
     );
   });
 });
+
+const port = Number(process.env.PORT);
+
+io.listen(port);
+console.log(`💬 Chat Server is running on port ${port}`);
