@@ -12,7 +12,19 @@ const io = new Server({
   }
 });
 
-let onlineUsers: { socketId: string; userId: string }[] = [];
+const port = Number(process.env.PORT);
+
+io.listen(port);
+console.log(`Server is running on port ${port}`);
+
+type OnlineUser = { socketId: string; userId: string };
+type ChatMessagePayload = {
+  userId: string;
+  message: string;
+  timestamp?: string;
+};
+
+let onlineUsers: OnlineUser[] = [];
 
 io.on("connection", (socket: Socket) => {
   onlineUsers.push({ socketId: socket.id, userId: "" });
@@ -47,6 +59,31 @@ io.on("connection", (socket: Socket) => {
     io.emit("usersOnline", onlineUsers);
   });
 
+  socket.on("chat:message", (payload: ChatMessagePayload) => {
+    const trimmedMessage = payload?.message?.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    const sender =
+      onlineUsers.find(user => user.socketId === socket.id) ?? null;
+
+    const outgoingMessage = {
+      userId: payload.userId || sender?.userId || socket.id,
+      message: trimmedMessage,
+      timestamp: payload.timestamp ?? new Date().toISOString()
+    };
+
+    io.emit("chat:message", outgoingMessage);
+    console.log(
+      "Relayed chat message from: ",
+      outgoingMessage.userId,
+      " message: ",
+      outgoingMessage.message
+    );
+  });
+
   socket.on("disconnect", () => {
     onlineUsers = onlineUsers.filter(user => user.socketId !== socket.id);
     io.emit("usersOnline", onlineUsers);
@@ -59,16 +96,3 @@ io.on("connection", (socket: Socket) => {
     );
   });
 });
-
-const port = Number(process.env.PORT);
-
-io.listen(port);
-console.log(`Server is running on port ${port}`);
-
-
-
-
-
-
-
-
